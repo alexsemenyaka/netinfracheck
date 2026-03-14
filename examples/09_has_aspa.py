@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-import infracheck
+import netinfracheck
 
 
 def main():
     asn = "AS174"
     print(f"=== Synchronous ASPA Check for {asn} ===")
 
-    exists = infracheck.has_aspa(asn)
+    exists = netinfracheck.has_aspa(asn)
     print(f"ASPA record exists: {exists}")
 
 

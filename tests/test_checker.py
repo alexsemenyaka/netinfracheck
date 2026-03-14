@@ -2,15 +2,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from infracheck import checker
+from netinfracheck import checker
 
 
 @pytest.fixture
 def mock_lg_response(mocker):
     """Mocks the synchronous and asynchronous Looking Glass functions."""
     data = [("1.1.1.0/24", "AS13335")]
-    mocker.patch("infracheck.checker.lg_data", return_value=data)
-    mocker.patch("infracheck.checker.aio_lg_data", new_callable=AsyncMock, return_value=data)
+    mocker.patch("netinfracheck.checker.lg_data", return_value=data)
+    mocker.patch("netinfracheck.checker.aio_lg_data", new_callable=AsyncMock, return_value=data)
 
 
 def test_has_roa(mocker, mock_lg_response):

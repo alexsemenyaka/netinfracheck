@@ -1,4 +1,4 @@
-# infracheck Module Documentation
+# netinfracheck Module Documentation
 
 This module provides a suite of tools for synchronous and asynchronous auditing of network infrastructure, including RPKI validation (ROA, ASPA), BGP Origins checks, as well as analyzing DNSSEC status and PTR records quality (reverse resolving).
 

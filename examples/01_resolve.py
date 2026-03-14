@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import infracheck
+import netinfracheck
 
 
 def main():
@@ -7,7 +7,7 @@ def main():
     print(f"=== Synchronous DNS Resolution for {domain} ===")
 
     # Query A records (default)
-    ips = infracheck.resolve_domain(domain)
+    ips = netinfracheck.resolve_domain(domain)
     print("\n[A Records]")
     if ips:
         for ip in ips:
@@ -16,7 +16,7 @@ def main():
         print("  No A records found.")
 
     # Query NS records
-    ns_records = infracheck.resolve_domain(domain, qtype="NS")
+    ns_records = netinfracheck.resolve_domain(domain, qtype="NS")
     print("\n[NS Records]")
     if ns_records:
         for ns in ns_records:
@@ -25,7 +25,7 @@ def main():
         print("  No NS records found.")
 
     # Query MX records
-    mx_records = infracheck.resolve_domain(domain, qtype="MX")
+    mx_records = netinfracheck.resolve_domain(domain, qtype="MX")
     print("\n[MX Records]")
     if mx_records:
         for mx in mx_records:

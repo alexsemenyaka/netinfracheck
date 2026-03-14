@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 import asyncio
 
-import infracheck
+import netinfracheck
 
 
 async def main():
     ip = "8.8.8.8"
     print(f"=== Asynchronous BGP Origins for {ip} ===")
 
-    asns = await infracheck.aio_get_origins(ip)
+    asns = await netinfracheck.aio_get_origins(ip)
 
     if asns:
         print(f"Announced by: {', '.join(asns)}")

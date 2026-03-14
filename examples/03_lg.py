@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-import infracheck
+import netinfracheck
 
 
 def main():
     target = "1.1.1.1"
     print(f"=== Synchronous Looking Glass Data for {target} ===")
 
-    announcements = infracheck.lg_data(target)
+    announcements = netinfracheck.lg_data(target)
 
     if not announcements:
         print("No visibility data found.")

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 import asyncio
 
-import infracheck
+import netinfracheck
 
 
 async def main():
     target = "1.1.1.1"
     print(f"=== Asynchronous Looking Glass Data for {target} ===")
 
-    announcements = await infracheck.aio_lg_data(target)
+    announcements = await netinfracheck.aio_lg_data(target)
 
     if not announcements:
         print("No visibility data found.")

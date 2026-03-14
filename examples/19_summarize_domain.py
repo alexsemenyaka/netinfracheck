@@ -2,7 +2,7 @@
 import sys
 import asyncio
 import logging
-import infracheck
+import netinfracheck
 
 logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
@@ -56,7 +56,7 @@ async def main():
     print("This will take a few seconds...\n")
 
     # Run the heavy recursive evaluation
-    eval_json = await infracheck.aio_evaluate_domain(
+    eval_json = await netinfracheck.aio_evaluate_domain(
         domain,
         deep=True,
         ns=True,
@@ -65,7 +65,7 @@ async def main():
     )
 
     # Process it into the high-level summary
-    summary = infracheck.summarize_domain(eval_json)
+    summary = netinfracheck.summarize_domain(eval_json)
 
     # Print the 9-point list
     dnssec_main = format_colored_metric(summary.get('dnssec', False), is_bool=True)

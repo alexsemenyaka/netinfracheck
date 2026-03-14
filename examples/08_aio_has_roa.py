@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 
-import infracheck
+import netinfracheck
 
 
 async def main():
@@ -9,12 +9,12 @@ async def main():
     print(f"=== Asynchronous ROA Check for {ip} ===")
 
     # Standard check
-    prefix, is_valid = await infracheck.aio_has_roa(ip, deep=False)
+    prefix, is_valid = await netinfracheck.aio_has_roa(ip, deep=False)
     print(f"[Standard] Most Specific Prefix: {prefix} | ROA Valid: {is_valid}")
 
     # Deep check
     print("\n[Deep] Full Announcement Chain:")
-    prefixes, verdicts = await infracheck.aio_has_roa(ip, deep=True)
+    prefixes, verdicts = await netinfracheck.aio_has_roa(ip, deep=True)
 
     if not prefixes:
         print("No announcements found.")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import logging
-import infracheck
+import netinfracheck
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -15,7 +15,7 @@ def main():
     print(f"=== Synchronous Domain Evaluation for {target_domain} ===")
 
     # Passing deep=False to keep the output reasonable, but enabling NS and MX checks.
-    json_result = infracheck.evaluate_domain(
+    json_result = netinfracheck.evaluate_domain(
         target_domain,
         deep=False,
         ns=True,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
-import infracheck
+import netinfracheck
 
 async def main():
     target_domain = "cloudflare.com"
@@ -8,7 +8,7 @@ async def main():
     print(f"=== Asynchronous Domain Evaluation for {target_domain} ===")
 
     # Enabling all checks including SOA paranoia mode
-    json_result = await infracheck.aio_evaluate_domain(
+    json_result = await netinfracheck.aio_evaluate_domain(
         target_domain,
         deep=False,
         ns=True,

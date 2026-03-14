@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import logging
-import infracheck
+import netinfracheck
 
 # Disable debug logs to keep the console clean
 logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
@@ -34,10 +34,10 @@ def main():
     print("Fetching deep infrastructure data... Please wait.\n")
 
     # Generate the full JSON tree internally
-    eval_dict = infracheck.evaluate_ip(ip, deep=True)
+    eval_dict = netinfracheck.evaluate_ip(ip, deep=True)
 
     # Process it through our new summary function
-    summary = infracheck.summarize_ip(eval_dict)
+    summary = netinfracheck.summarize_ip(eval_dict)
 
     print("[ Final Summary ]")
 

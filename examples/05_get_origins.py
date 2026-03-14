@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-import infracheck
+import netinfracheck
 
 
 def main():
     ip = "8.8.8.8"
     print(f"=== Synchronous BGP Origins for {ip} ===")
 
-    asns = infracheck.get_origins(ip)
+    asns = netinfracheck.get_origins(ip)
 
     if asns:
         print(f"Announced by: {', '.join(asns)}")

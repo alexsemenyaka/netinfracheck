@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from infracheck import utils
+from netinfracheck import utils
 
 
 @pytest.fixture

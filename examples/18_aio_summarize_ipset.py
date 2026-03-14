@@ -3,7 +3,7 @@
 import sys
 import asyncio
 import logging
-import infracheck
+import netinfracheck
 
 logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
@@ -29,7 +29,7 @@ async def main():
     print(f"=== Evaluating Route Security for NS servers of {domain} ===\n")
 
     # 1. Gather all NS records
-    ns_records = await infracheck.aio_resolve_domain(domain, 'NS')
+    ns_records = await netinfracheck.aio_resolve_domain(domain, 'NS')
     if not ns_records:
         print("No NS records found.")
         return
@@ -37,7 +37,7 @@ async def main():
     # 2. Resolve all NS names to a flat list of unique IP addresses
     all_ips = []
     for ns in ns_records:
-        ips = await infracheck.aio_resolve_domain(ns.rstrip('.'), 'A')
+        ips = await netinfracheck.aio_resolve_domain(ns.rstrip('.'), 'A')
         all_ips.extend(ips)
 
     unique_ips = list(set(all_ips))
@@ -45,11 +45,11 @@ async def main():
     print("Fetching BGP evaluations... Please wait.\n")
 
     # 3. Evaluate all IPs concurrently
-    tasks = [infracheck.aio_evaluate_ip(ip, deep=True) for ip in unique_ips]
+    tasks = [netinfracheck.aio_evaluate_ip(ip, deep=True) for ip in unique_ips]
     evaluations = await asyncio.gather(*tasks)
 
     # 4. Summarize the entire Set
-    summary = infracheck.summarize_ipset(evaluations)
+    summary = netinfracheck.summarize_ipset(evaluations)
 
     print("[ IPSet Infrastructure Summary ]")
 
