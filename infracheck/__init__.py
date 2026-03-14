@@ -16,8 +16,10 @@ from .checker import (
     has_aspa,
     has_dnssec,
     has_roa,
+    check_backresolv,
+    aio_check_backresolv,
 )
-from .utils import aio_lg_data, aio_resolve_domain, lg_data, resolve_domain
+from .utils import lg_data, aio_lg_data, resolve_domain, aio_resolve_domain
 from .evaluator import (
     evaluate_ip,
     aio_evaluate_ip,
@@ -25,6 +27,7 @@ from .evaluator import (
     aio_evaluate_domain,
     summarize_ip,
     summarize_ipset,
+    summarize_domain,
 )
 
 try:
@@ -50,10 +53,13 @@ __all__ = [
     "aio_resolve_domain",
     "lg_data",
     "aio_lg_data",
+    "check_backresolv",
+    "aio_check_backresolv",
     "evaluate_ip",
     "aio_evaluate_ip",
     "evaluate_domain",
     "aio_evaluate_domain",
     "summarize_ip",
     "summarize_ipset",
+    "summarize_domain",
 ]

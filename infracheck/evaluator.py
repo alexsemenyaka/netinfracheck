@@ -10,6 +10,8 @@ from .checker import (
     aio_has_aspa,
     has_dnssec,
     aio_has_dnssec,
+    check_backresolv,
+    aio_check_backresolv,
 )
 
 from .utils import (
@@ -101,13 +103,19 @@ async def _aio_evaluate_ip_dict(ip: str, deep: bool = False) -> Dict[str, Any]:
 def _evaluate_domain_dict(
     domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False
 ) -> Dict[str, Any]:
-    """Internal synchronous function to evaluate a domain recursively."""
-    result: Dict[str, Any] = {"domain": domain, "dnssec": has_dnssec(domain, deep=deep), "ips": {}}
+    """Internal synchronous function to evaluate a domain recursively (A + AAAA)."""
+    result: Dict[str, Any] = {
+        "domain": domain,
+        "dnssec": has_dnssec(domain, deep=deep),
+        "backresolv": check_backresolv(domain),
+        "ips": {}
+    }
     if ns: result["ns"] = {}
     if mx: result["mx"] = {}
     if soa: result["soa"] = {}
 
-    for ip in resolve_domain(domain, 'A'):
+    ips = resolve_domain(domain, 'A') + resolve_domain(domain, 'AAAA')
+    for ip in ips:
         result["ips"][ip] = _evaluate_ip_dict(ip, deep=deep)
 
     if ns:
@@ -135,15 +143,20 @@ def _evaluate_domain_dict(
 async def _aio_evaluate_domain_dict(
     domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False
 ) -> Dict[str, Any]:
-    """Internal asynchronous function to evaluate a domain recursively."""
-    result: Dict[str, Any] = {"domain": domain, "dnssec": False, "ips": {}}
+    """Internal asynchronous function to evaluate a domain recursively (A + AAAA)."""
+    result: Dict[str, Any] = {"domain": domain, "dnssec": False, "backresolv": 0.0, "ips": {}}
     if ns: result["ns"] = {}
     if mx: result["mx"] = {}
     if soa: result["soa"] = {}
 
-    dns_tasks = [aio_has_dnssec(domain, deep=deep), aio_resolve_domain(domain, 'A')]
-    ns_idx, mx_idx, soa_idx = -1, -1, -1
+    dns_tasks = [
+        aio_has_dnssec(domain, deep=deep),
+        aio_check_backresolv(domain),
+        aio_resolve_domain(domain, 'A'),
+        aio_resolve_domain(domain, 'AAAA')
+    ]
 
+    ns_idx, mx_idx, soa_idx = -1, -1, -1
     if ns:
         ns_idx = len(dns_tasks)
         dns_tasks.append(aio_resolve_domain(domain, 'NS'))
@@ -156,9 +169,12 @@ async def _aio_evaluate_domain_dict(
 
     gathered = await asyncio.gather(*dns_tasks)
     result["dnssec"] = gathered[0]
+    result["backresolv"] = gathered[1]
+
+    ips = gathered[2] + gathered[3]
 
     recursive_tasks = {}
-    for ip in gathered[1]:
+    for ip in ips:
         recursive_tasks[("ip", ip)] = _aio_evaluate_ip_dict(ip, deep=deep)
 
     if ns:
@@ -247,14 +263,11 @@ def summarize_ip(eval_data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
     ms_route = routes[0]
     ms_prefix = ms_route.get("prefix")
 
-    # 3. Average ROA across all prefixes for this IP
     all_roas = {r.get("prefix"): r.get("roa_status") for r in routes if r.get("prefix")}
     roa_avg = _calc_roa_avg(all_roas)
 
-    # 4. Gather ASNs that announce specifically the most specific prefix
     ms_asns = list(set(r.get("asn") for r in routes if r.get("prefix") == ms_prefix and r.get("asn")))
 
-    # 5. Average ASPA for those exact ASNs
     valid_aspa = sum(1 for r in routes if r.get("prefix") == ms_prefix and r.get("aspa_status"))
     aspa_avg = (valid_aspa / len(ms_asns)) if ms_asns else 0.0
 
@@ -270,12 +283,12 @@ def summarize_ip(eval_data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
 def summarize_ipset(eval_datas: List[Union[str, Dict[str, Any]]]) -> Dict[str, Any]:
     """Summarizes an array of IP evaluations (e.g., all NS IPs) into aggregate metrics."""
     specific_prefixes = set()
-    specific_roas = {}  # prefix -> status
+    specific_roas = {}
     specific_asns = set()
 
     all_prefixes = set()
-    all_roas = {}       # prefix -> status
-    aspa_map = {}       # asn -> status
+    all_roas = {}
+    aspa_map = {}
 
     for item in eval_datas:
         data = json.loads(item) if isinstance(item, str) else item
@@ -283,7 +296,6 @@ def summarize_ipset(eval_datas: List[Union[str, Dict[str, Any]]]) -> Dict[str, A
         if not routes:
             continue
 
-        # Process the most specific prefix
         ms_route = routes[0]
         ms_p = ms_route.get("prefix")
         ms_roa = ms_route.get("roa_status")
@@ -292,7 +304,6 @@ def summarize_ipset(eval_datas: List[Union[str, Dict[str, Any]]]) -> Dict[str, A
             specific_prefixes.add(ms_p)
             specific_roas[ms_p] = ms_roa
 
-        # Find all ASNs announcing this most specific prefix (handling multihoming)
         for r in routes:
             p = r.get("prefix")
             a = r.get("asn")
@@ -317,4 +328,54 @@ def summarize_ipset(eval_datas: List[Union[str, Dict[str, Any]]]) -> Dict[str, A
         "roa_average_all": roa_avg_all,
         "asns": list(specific_asns),
         "aspa_average": aspa_avg
+    }
+
+
+def summarize_domain(eval_data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarizes a full domain evaluation tree into high-level metrics."""
+    data = json.loads(eval_data) if isinstance(eval_data, str) else eval_data
+
+    # Main domain
+    main_dnssec = data.get("dnssec", False)
+    main_backresolv = data.get("backresolv", 0.0)
+
+    main_ips = list(data.get("ips", {}).values())
+    main_ipset = summarize_ipset(main_ips) if main_ips else None
+
+    # NS
+    ns_data = data.get("ns", {})
+    ns_dnssec_list = [v.get("dnssec", False) for v in ns_data.values()]
+    ns_dnssec_avg = sum(ns_dnssec_list) / len(ns_dnssec_list) if ns_dnssec_list else 0.0
+
+    ns_br_list = [v.get("backresolv", 0.0) for v in ns_data.values()]
+    ns_backresolv_avg = sum(ns_br_list) / len(ns_br_list) if ns_br_list else 0.0
+
+    ns_ips = []
+    for ns_obj in ns_data.values():
+        ns_ips.extend(list(ns_obj.get("ips", {}).values()))
+    ns_ipset = summarize_ipset(ns_ips) if ns_ips else None
+
+    # MX
+    mx_data = data.get("mx", {})
+    mx_dnssec_list = [v.get("dnssec", False) for v in mx_data.values()]
+    mx_dnssec_avg = sum(mx_dnssec_list) / len(mx_dnssec_list) if mx_dnssec_list else 0.0
+
+    mx_br_list = [v.get("backresolv", 0.0) for v in mx_data.values()]
+    mx_backresolv_avg = sum(mx_br_list) / len(mx_br_list) if mx_br_list else 0.0
+
+    mx_ips = []
+    for mx_obj in mx_data.values():
+        mx_ips.extend(list(mx_obj.get("ips", {}).values()))
+    mx_ipset = summarize_ipset(mx_ips) if mx_ips else None
+
+    return {
+        "dnssec": main_dnssec,
+        "backresolv": main_backresolv,
+        "ipset": main_ipset,
+        "ns_dnssec_average": ns_dnssec_avg,
+        "ns_backresolv_average": ns_backresolv_avg,
+        "ns_ipset": ns_ipset,
+        "mx_dnssec_average": mx_dnssec_avg,
+        "mx_backresolv_average": mx_backresolv_avg,
+        "mx_ipset": mx_ipset
     }

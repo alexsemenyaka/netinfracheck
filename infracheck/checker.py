@@ -7,8 +7,14 @@ import httpx
 import dns.name
 import dns.resolver
 import dns.asyncresolver
+import dns.reversename
 
-from .utils import lg_data, aio_lg_data
+from .utils import (
+    lg_data,
+    aio_lg_data,
+    resolve_domain,
+    aio_resolve_domain
+)
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -36,7 +42,6 @@ def _update_aspa_cache_sync(token: str, cache_ttl: int) -> bool:
     global _ASPA_CACHE, _ASPA_CACHE_TIME
 
     with _ASPA_SYNC_LOCK:
-        # Double-check inside the lock in case another thread already updated it
         if time.time() - _ASPA_CACHE_TIME < cache_ttl:
             return True
 
@@ -105,16 +110,7 @@ async def _update_aspa_cache_async(token: str, cache_ttl: int) -> bool:
 
 
 def has_roa(address: str, deep: bool = False):
-    """Synchronously checks the RPKI ROA status for a given IP address.
-
-    Args:
-        address (str): The target IP address or prefix.
-        deep (bool): If True, checks the entire chain of announcing prefixes.
-
-    Returns:
-        tuple: If deep=False, returns (str: prefix, str: status).
-               If deep=True, returns (list: prefixes, list: statuses).
-    """
+    """Synchronously checks the RPKI ROA status for a given IP address."""
     announcements = lg_data(address)
     if not announcements:
         return (None, "UNKNOWN") if not deep else ([], [])
@@ -147,16 +143,7 @@ def has_roa(address: str, deep: bool = False):
 
 
 async def aio_has_roa(address: str, deep: bool = False):
-    """Asynchronously checks the RPKI ROA status for a given IP address.
-
-    Args:
-        address (str): The target IP address or prefix.
-        deep (bool): If True, checks the entire chain of announcing prefixes.
-
-    Returns:
-        tuple: If deep=False, returns (str: prefix, str: status).
-               If deep=True, returns (list: prefixes, list: statuses).
-    """
+    """Asynchronously checks the RPKI ROA status for a given IP address."""
     announcements = await aio_lg_data(address)
     if not announcements:
         return (None, "UNKNOWN") if not deep else ([], [])
@@ -189,14 +176,7 @@ async def aio_has_roa(address: str, deep: bool = False):
 
 
 def get_origins(address: str) -> list:
-    """Synchronously retrieves the originating ASNs for an IP address.
-
-    Args:
-        address (str): The target IP address or prefix.
-
-    Returns:
-        list: A list of ASNs (e.g., ['AS13335']).
-    """
+    """Synchronously retrieves the originating ASNs for an IP address."""
     try:
         announcements = lg_data(address)
         asns = {asn for prefix, asn in announcements if asn}
@@ -207,14 +187,7 @@ def get_origins(address: str) -> list:
 
 
 async def aio_get_origins(address: str) -> list:
-    """Asynchronously retrieves the originating ASNs for an IP address.
-
-    Args:
-        address (str): The target IP address or prefix.
-
-    Returns:
-        list: A list of ASNs (e.g., ['AS13335']).
-    """
+    """Asynchronously retrieves the originating ASNs for an IP address."""
     try:
         announcements = await aio_lg_data(address)
         asns = {asn for prefix, asn in announcements if asn}
@@ -225,19 +198,7 @@ async def aio_get_origins(address: str) -> list:
 
 
 def has_aspa(asn: str, cache_ttl: int = 3600) -> bool | None:
-    """Synchronously checks if there are ASPA records for the given ASN.
-
-    Uses Cloudflare Radar API and caches the snapshot for `cache_ttl` seconds.
-    If the token is missing or fetching fails with an empty cache, returns None.
-
-    Args:
-        asn (str): The autonomous system number (e.g., 'AS13335' or '13335').
-        cache_ttl (int): Time-to-live for the snapshot cache in seconds.
-
-    Returns:
-        bool | None: True if ASPA records exist, False if not.
-                     None if validation cannot be performed.
-    """
+    """Synchronously checks if there are ASPA records for the given ASN."""
     token = _get_cf_token()
     if not token:
         logger.debug("Cloudflare token not found, skipping ASPA check.")
@@ -257,19 +218,7 @@ def has_aspa(asn: str, cache_ttl: int = 3600) -> bool | None:
 
 
 async def aio_has_aspa(asn: str, cache_ttl: int = 3600) -> bool | None:
-    """Asynchronously checks if there are ASPA records for the given ASN.
-
-    Uses Cloudflare Radar API and caches the snapshot for `cache_ttl` seconds.
-    If the token is missing or fetching fails with an empty cache, returns None.
-
-    Args:
-        asn (str): The autonomous system number (e.g., 'AS13335' or '13335').
-        cache_ttl (int): Time-to-live for the snapshot cache in seconds.
-
-    Returns:
-        bool | None: True if ASPA records exist, False if not.
-                     None if validation cannot be performed.
-    """
+    """Asynchronously checks if there are ASPA records for the given ASN."""
     token = _get_cf_token()
     if not token:
         logger.debug("Cloudflare token not found, skipping async ASPA check.")
@@ -289,18 +238,7 @@ async def aio_has_aspa(asn: str, cache_ttl: int = 3600) -> bool | None:
 
 
 def has_dnssec(domain: str, deep: bool = False) -> bool:
-    """Synchronously checks if a domain (or its parent zone) has DNSSEC enabled.
-
-    Automatically walks up the DNS tree to find the enclosing zone apex (where
-    the SOA record lives) before checking for DNSKEY and DS records.
-
-    Args:
-        domain (str): The target domain or host (e.g., 'ns5.cloudflare.com').
-        deep (bool): If True, traverses the chain of trust up to the root.
-
-    Returns:
-        bool: True if DNSSEC is valid for the enclosing zone, False otherwise.
-    """
+    """Synchronously checks if a domain (or its parent zone) has DNSSEC enabled."""
     try:
         target_name = dns.name.from_text(domain)
 
@@ -353,18 +291,7 @@ def has_dnssec(domain: str, deep: bool = False) -> bool:
 
 
 async def aio_has_dnssec(domain: str, deep: bool = False) -> bool:
-    """Asynchronously checks if a domain (or its parent zone) has DNSSEC enabled.
-
-    Automatically walks up the DNS tree to find the enclosing zone apex (where
-    the SOA record lives) before checking for DNSKEY and DS records.
-
-    Args:
-        domain (str): The target domain or host.
-        deep (bool): If True, traverses the chain of trust up to the root.
-
-    Returns:
-        bool: True if DNSSEC is valid for the enclosing zone, False otherwise.
-    """
+    """Asynchronously checks if a domain (or its parent zone) has DNSSEC enabled."""
     try:
         target_name = dns.name.from_text(domain)
 
@@ -414,3 +341,56 @@ async def aio_has_dnssec(domain: str, deep: bool = False) -> bool:
     except Exception as e:
         logger.exception(f"Async DNSSEC validation error for {domain}: {e}")
         return False
+
+
+def check_backresolv(domain: str) -> float:
+    """Synchronously checks the fraction of PTR records that match the domain."""
+    ips = resolve_domain(domain, 'A') + resolve_domain(domain, 'AAAA')
+    if not ips:
+        return 0.0
+
+    ptr_names = []
+    for ip in ips:
+        try:
+            rev_name = dns.reversename.from_address(ip)
+            answers = dns.resolver.resolve(rev_name, 'PTR')
+            for rdata in answers:
+                ptr_names.append(rdata.target.to_text().rstrip('.'))
+        except Exception:
+            pass
+
+    if not ptr_names:
+        return 0.0
+
+    matches = sum(1 for name in ptr_names if name.lower() == domain.lower())
+    return matches / len(ptr_names)
+
+
+async def aio_check_backresolv(domain: str) -> float:
+    """Asynchronously checks the fraction of PTR records that match the domain."""
+    ips_a, ips_aaaa = await asyncio.gather(
+        aio_resolve_domain(domain, 'A'),
+        aio_resolve_domain(domain, 'AAAA')
+    )
+    ips = ips_a + ips_aaaa
+    if not ips:
+        return 0.0
+
+    ptr_names = []
+    async def fetch_ptr(ip):
+        try:
+            rev_name = dns.reversename.from_address(ip)
+            answers = await dns.asyncresolver.resolve(rev_name, 'PTR')
+            return [rdata.target.to_text().rstrip('.') for rdata in answers]
+        except Exception:
+            return []
+
+    results = await asyncio.gather(*(fetch_ptr(ip) for ip in ips))
+    for res in results:
+        ptr_names.extend(res)
+
+    if not ptr_names:
+        return 0.0
+
+    matches = sum(1 for name in ptr_names if name.lower() == domain.lower())
+    return matches / len(ptr_names)
