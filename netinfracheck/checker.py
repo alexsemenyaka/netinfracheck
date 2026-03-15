@@ -21,7 +21,6 @@ from .utils import (
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-# Global cache state for ASPA validation
 _ASPA_CACHE = set()
 _ASPA_CACHE_TIME = 0.0
 _ASPA_SYNC_LOCK = threading.Lock()
@@ -58,7 +57,6 @@ def _update_aspa_cache_sync(token: str, cache_ttl: int) -> bool:
                 data = response.json()
 
                 aspa_objects = data.get("result", {}).get("aspaObjects", [])
-
                 new_cache = set()
                 for obj in aspa_objects:
                     customer_asn = obj.get("customerAsn")
@@ -94,7 +92,6 @@ async def _update_aspa_cache_async(token: str, cache_ttl: int) -> bool:
                 data = response.json()
 
                 aspa_objects = data.get("result", {}).get("aspaObjects", [])
-
                 new_cache = set()
                 for obj in aspa_objects:
                     customer_asn = obj.get("customerAsn")
@@ -115,6 +112,7 @@ def has_roa(address: str, deep: bool = False):
     """Synchronously checks the RPKI ROA status for a given IP address."""
     announcements = lg_data(address)
     if not announcements:
+        logger.debug(f"No BGP announcements found for {address}")
         return (None, "UNKNOWN") if not deep else ([], [])
 
     try:
@@ -126,8 +124,9 @@ def has_roa(address: str, deep: bool = False):
                 )
                 response = client.get(url)
                 response.raise_for_status()
-                status = response.json().get('data', {}).get('status', 'unknown')
-                return status.upper()
+                status = response.json().get('data', {}).get('status', 'unknown').upper()
+                logger.debug(f"ROA check for {prefix} {asn}: {status}")
+                return status
 
             if not deep:
                 target_prefix, target_asn = announcements[0]
@@ -137,6 +136,7 @@ def has_roa(address: str, deep: bool = False):
             for p, a in announcements:
                 prefixes.append(p)
                 verdicts.append(check_rpki(p, a))
+            logger.debug(f"Deep ROA check for {address} completed successfully.")
             return prefixes, verdicts
 
     except Exception as e:
@@ -148,6 +148,7 @@ async def aio_has_roa(address: str, deep: bool = False):
     """Asynchronously checks the RPKI ROA status for a given IP address."""
     announcements = await aio_lg_data(address)
     if not announcements:
+        logger.debug(f"Async: No BGP announcements found for {address}")
         return (None, "UNKNOWN") if not deep else ([], [])
 
     try:
@@ -159,8 +160,9 @@ async def aio_has_roa(address: str, deep: bool = False):
                 )
                 response = await client.get(url)
                 response.raise_for_status()
-                status = response.json().get('data', {}).get('status', 'unknown')
-                return status.upper()
+                status = response.json().get('data', {}).get('status', 'unknown').upper()
+                logger.debug(f"Async ROA check for {prefix} {asn}: {status}")
+                return status
 
             if not deep:
                 target_prefix, target_asn = announcements[0]
@@ -170,6 +172,7 @@ async def aio_has_roa(address: str, deep: bool = False):
             for p, a in announcements:
                 prefixes.append(p)
                 verdicts.append(await check_rpki(p, a))
+            logger.debug(f"Async deep ROA check for {address} completed successfully.")
             return prefixes, verdicts
 
     except Exception as e:
@@ -182,6 +185,7 @@ def get_origins(address: str) -> list:
     try:
         announcements = lg_data(address)
         asns = {asn for prefix, asn in announcements if asn}
+        logger.debug(f"Origins for {address} retrieved: {list(asns)}")
         return list(asns)
     except Exception as e:
         logger.error(f"Error in get_origins for {address}: {e}")
@@ -193,6 +197,7 @@ async def aio_get_origins(address: str) -> list:
     try:
         announcements = await aio_lg_data(address)
         asns = {asn for prefix, asn in announcements if asn}
+        logger.debug(f"Async origins for {address} retrieved: {list(asns)}")
         return list(asns)
     except Exception as e:
         logger.error(f"Error in aio_get_origins for {address}: {e}")
@@ -213,7 +218,9 @@ def has_aspa(asn: str, cache_ttl: int = 3600) -> bool | None:
 
     try:
         clean_asn = int(asn.upper().replace("AS", ""))
-        return clean_asn in _ASPA_CACHE
+        has_record = clean_asn in _ASPA_CACHE
+        logger.debug(f"ASPA check for {asn}: {has_record}")
+        return has_record
     except ValueError:
         logger.error(f"Invalid ASN format provided: {asn}")
         return None
@@ -233,7 +240,9 @@ async def aio_has_aspa(asn: str, cache_ttl: int = 3600) -> bool | None:
 
     try:
         clean_asn = int(asn.upper().replace("AS", ""))
-        return clean_asn in _ASPA_CACHE
+        has_record = clean_asn in _ASPA_CACHE
+        logger.debug(f"Async ASPA check for {asn}: {has_record}")
+        return has_record
     except ValueError:
         logger.error(f"Invalid ASN format provided: {asn}")
         return None
@@ -255,26 +264,29 @@ def has_dnssec(domain: str, deep: bool = False) -> bool:
             try:
                 dns.resolver.resolve(current, dns.rdatatype.DNSKEY)
                 dns.resolver.resolve(current, dns.rdatatype.DS)
+                logger.debug(f"DNSSEC shallow check passed for {domain} at {current}")
                 return True
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            except Exception as e:
+                logger.debug(f"DNSSEC shallow check failed for {domain} at {current}: {e}")
                 return False
 
         while True:
             logger.debug(f"Deep check: verifying zone {current}")
             try:
                 dns.resolver.resolve(current, dns.rdatatype.DNSKEY)
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                logger.error(f"DNSSEC break: No DNSKEY found for {current}")
+            except Exception as e:
+                logger.error(f"DNSSEC break: No DNSKEY found for {current} ({e})")
                 return False
 
             if current == dns.name.root:
+                logger.debug(f"DNSSEC deep check completed successfully up to root for {domain}")
                 return True
 
             parent = current.parent()
             try:
                 dns.resolver.resolve(current, dns.rdatatype.DS)
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                logger.error(f"DNSSEC break: No DS record for {current} in zone {parent}")
+            except Exception as e:
+                logger.error(f"DNSSEC break: No DS record for {current} in zone {parent} ({e})")
                 return False
 
             current = parent
@@ -300,26 +312,29 @@ async def aio_has_dnssec(domain: str, deep: bool = False) -> bool:
             try:
                 await dns.asyncresolver.resolve(current, dns.rdatatype.DNSKEY)
                 await dns.asyncresolver.resolve(current, dns.rdatatype.DS)
+                logger.debug(f"Async DNSSEC shallow check passed for {domain} at {current}")
                 return True
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            except Exception as e:
+                logger.debug(f"Async DNSSEC shallow check failed for {domain} at {current}: {e}")
                 return False
 
         while True:
             logger.debug(f"Async deep check: verifying zone {current}")
             try:
                 await dns.asyncresolver.resolve(current, dns.rdatatype.DNSKEY)
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                logger.error(f"DNSSEC break: No DNSKEY found for {current}")
+            except Exception as e:
+                logger.error(f"DNSSEC break: No DNSKEY found for {current} ({e})")
                 return False
 
             if current == dns.name.root:
+                logger.debug(f"Async DNSSEC deep check completed successfully up to root for {domain}")
                 return True
 
             parent = current.parent()
             try:
                 await dns.asyncresolver.resolve(current, dns.rdatatype.DS)
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                logger.error(f"DNSSEC break: No DS record for {current} in zone {parent}")
+            except Exception as e:
+                logger.error(f"DNSSEC break: No DS record for {current} in zone {parent} ({e})")
                 return False
 
             current = parent
@@ -333,6 +348,7 @@ def check_backresolv(domain: str) -> float:
     """Synchronously checks the fraction of PTR records that match the domain."""
     ips = resolve_domain(domain, 'A') + resolve_domain(domain, 'AAAA')
     if not ips:
+        logger.debug(f"No IP addresses found for PTR check of {domain}")
         return 0.0
 
     ptr_names = []
@@ -342,14 +358,17 @@ def check_backresolv(domain: str) -> float:
             answers = dns.resolver.resolve(rev_name, 'PTR')
             for rdata in answers:
                 ptr_names.append(rdata.target.to_text().rstrip('.'))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"PTR resolution failed for IP {ip} ({domain}): {e}")
 
     if not ptr_names:
+        logger.debug(f"No PTR records returned for any IPs of {domain}")
         return 0.0
 
     matches = sum(1 for name in ptr_names if name.lower() == domain.lower())
-    return matches / len(ptr_names)
+    fraction = matches / len(ptr_names)
+    logger.debug(f"Backresolv matched {matches}/{len(ptr_names)} ({fraction:.2f}) for {domain}")
+    return fraction
 
 
 async def aio_check_backresolv(domain: str) -> float:
@@ -360,6 +379,7 @@ async def aio_check_backresolv(domain: str) -> float:
     )
     ips = ips_a + ips_aaaa
     if not ips:
+        logger.debug(f"Async: No IP addresses found for PTR check of {domain}")
         return 0.0
 
     ptr_names = []
@@ -368,7 +388,8 @@ async def aio_check_backresolv(domain: str) -> float:
             rev_name = dns.reversename.from_address(ip)
             answers = await dns.asyncresolver.resolve(rev_name, 'PTR')
             return [rdata.target.to_text().rstrip('.') for rdata in answers]
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Async PTR resolution failed for IP {ip} ({domain}): {e}")
             return []
 
     results = await asyncio.gather(*(fetch_ptr(ip) for ip in ips))
@@ -376,7 +397,10 @@ async def aio_check_backresolv(domain: str) -> float:
         ptr_names.extend(res)
 
     if not ptr_names:
+        logger.debug(f"Async: No PTR records returned for any IPs of {domain}")
         return 0.0
 
     matches = sum(1 for name in ptr_names if name.lower() == domain.lower())
-    return matches / len(ptr_names)
+    fraction = matches / len(ptr_names)
+    logger.debug(f"Async backresolv matched {matches}/{len(ptr_names)} ({fraction:.2f}) for {domain}")
+    return fraction
