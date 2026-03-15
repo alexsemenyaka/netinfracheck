@@ -1,174 +1,383 @@
+import json
 import logging
+import asyncio
+from typing import Dict, Any, Union, List
 
-import dns.asyncresolver
-import dns.resolver
-import dns.name
-import httpx
+from .checker import (
+    has_roa,
+    aio_has_roa,
+    has_aspa,
+    aio_has_aspa,
+    has_dnssec,
+    aio_has_dnssec,
+    check_backresolv,
+    aio_check_backresolv,
+)
+
+from .utils import (
+    resolve_domain,
+    aio_resolve_domain,
+    lg_data,
+    aio_lg_data,
+    find_ns,
+    aio_find_ns
+)
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-def _parse_lg_response(data: dict) -> list:
-    """Parses the raw JSON response from RIPE Stat Looking Glass.
+def _evaluate_ip_dict(ip: str, deep: bool = False) -> Dict[str, Any]:
+    """Internal synchronous function to evaluate an IP and bind ASNs to prefixes."""
+    logger.debug(f"Evaluating IP {ip} (deep={deep})")
 
-    Extracts BGP announcements and normalizes AS numbers.
+    announcements = lg_data(ip)
+    routes = []
 
-    Args:
-        data (dict): The parsed JSON data dictionary from the API.
+    if announcements:
+        if deep:
+            prefixes, statuses = has_roa(ip, deep=True)
+            for i, (p, s) in enumerate(zip(prefixes, statuses, strict=True)):
+                asn = announcements[i][1]
+                routes.append({
+                    "prefix": p,
+                    "asn": asn,
+                    "roa_status": s,
+                    "aspa_status": has_aspa(asn)
+                })
+        else:
+            p, s = has_roa(ip, deep=False)
+            asn = announcements[0][1]
+            routes.append({
+                "prefix": p,
+                "asn": asn,
+                "roa_status": s,
+                "aspa_status": has_aspa(asn)
+            })
 
-    Returns:
-        list: A list of tuples (prefix, asn) sorted by prefix length
-        (most specific first).
-    """
-    announcements = set()
-    for rrc in data.get("data", {}).get("rrcs", []):
-        for peer in rrc.get("peers", []):
-            prefix = peer.get("prefix")
-            asn = peer.get("asn_origin")
-
-            if prefix and asn:
-                asn_str = str(asn).upper()
-                if not asn_str.startswith("AS"):
-                    asn_str = f"AS{asn_str}"
-                announcements.add((prefix, asn_str))
-
-    return sorted(list(announcements), key=lambda x: int(x[0].split("/")[-1]), reverse=True)
-
-
-def lg_data(resource: str) -> list:
-    """Synchronously retrieves and parses Looking Glass data for a resource.
-
-    Args:
-        resource (str): An IP address or BGP prefix.
-
-    Returns:
-        list: A sorted list of (prefix, asn) tuples, or an empty list on failure.
-    """
-    url = f"https://stat.ripe.net/data/looking-glass/data.json?resource={resource}"
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            return _parse_lg_response(response.json())
-    except Exception as e:
-        logger.error(f"Looking Glass query failed for {resource}: {e}")
-        return []
+    return {
+        "target": ip,
+        "deep": deep,
+        "routes": routes
+    }
 
 
-async def aio_lg_data(resource: str) -> list:
-    """Asynchronously retrieves and parses Looking Glass data for a resource.
+async def _aio_evaluate_ip_dict(ip: str, deep: bool = False) -> Dict[str, Any]:
+    """Internal asynchronous function to evaluate an IP and bind ASNs to prefixes."""
+    logger.debug(f"Async evaluating IP {ip} (deep={deep})")
 
-    Args:
-        resource (str): An IP address or BGP prefix.
+    announcements = await aio_lg_data(ip)
+    routes = []
 
-    Returns:
-        list: A sorted list of (prefix, asn) tuples, or an empty list on failure.
-    """
-    url = f"https://stat.ripe.net/data/looking-glass/data.json?resource={resource}"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return _parse_lg_response(response.json())
-    except Exception as e:
-        logger.error(f"Async Looking Glass query failed for {resource}: {e}")
-        return []
+    if announcements:
+        unique_asns = list(set(a for p, a in announcements))
+        aspa_tasks = [aio_has_aspa(asn) for asn in unique_asns]
+        aspa_results = await asyncio.gather(*aspa_tasks)
+        aspa_map = dict(zip(unique_asns, aspa_results, strict=True))
 
+        if deep:
+            prefixes, statuses = await aio_has_roa(ip, deep=True)
+            for i, (p, s) in enumerate(zip(prefixes, statuses, strict=True)):
+                asn = announcements[i][1]
+                routes.append({
+                    "prefix": p,
+                    "asn": asn,
+                    "roa_status": s,
+                    "aspa_status": aspa_map[asn]
+                })
+        else:
+            p, s = await aio_has_roa(ip, deep=False)
+            asn = announcements[0][1]
+            routes.append({
+                "prefix": p,
+                "asn": asn,
+                "roa_status": s,
+                "aspa_status": aspa_map[asn]
+            })
 
-def resolve_domain(domain: str, qtype: str = "A") -> list:
-    """Synchronously resolves a domain name for a specific DNS record type.
-
-    Args:
-        domain (str): The domain name to resolve.
-        qtype (str): The DNS record type to query (e.g., 'A', 'NS', 'MX', 'SOA').
-                     Defaults to 'A'.
-
-    Returns:
-        list: A list of resolved records as strings, or an empty list on failure.
-    """
-    try:
-        logger.debug(f"Resolving {qtype} records for {domain}")
-        answers = dns.resolver.resolve(domain, qtype)
-        return [str(rdata) for rdata in answers]
-    except Exception as e:
-        logger.warning(f"Resolution of {qtype} failed for {domain}: {e}")
-        return []
-
-
-async def aio_resolve_domain(domain: str, qtype: str = "A") -> list:
-    """Asynchronously resolves a domain name for a specific DNS record type.
-
-    Args:
-        domain (str): The domain name to resolve.
-        qtype (str): The DNS record type to query (e.g., 'A', 'NS', 'MX', 'SOA').
-                     Defaults to 'A'.
-
-    Returns:
-        list: A list of resolved records as strings, or an empty list on failure.
-    """
-    try:
-        logger.debug(f"Async resolving {qtype} records for {domain}")
-        answers = await dns.asyncresolver.resolve(domain, qtype)
-        return [str(rdata) for rdata in answers]
-    except Exception as e:
-        logger.warning(f"Async resolution of {qtype} failed for {domain}: {e}")
-        return []
+    return {
+        "target": ip,
+        "deep": deep,
+        "routes": routes
+    }
 
 
-def find_ns(domain: str) -> list:
-    """Synchronously finds the authoritative Name Servers for a domain.
+def _evaluate_domain_dict(
+    domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False
+) -> Dict[str, Any]:
+    """Internal synchronous function to evaluate a domain recursively (A + AAAA)."""
+    result: Dict[str, Any] = {
+        "domain": domain,
+        "dnssec": has_dnssec(domain, deep=deep),
+        "backresolv": check_backresolv(domain),
+        "ips": {}
+    }
+    if ns: result["ns"] = {}
+    if mx: result["mx"] = {}
+    if soa: result["soa"] = {}
 
-    Walks up the DNS tree label by label until it finds valid NS records.
+    ips = resolve_domain(domain, 'A') + resolve_domain(domain, 'AAAA')
+    for ip in ips:
+        result["ips"][ip] = _evaluate_ip_dict(ip, deep=deep)
 
-    Args:
-        domain (str): The domain or host name to check.
+    if ns:
+        for record in find_ns(domain):
+            ns_domain = record.rstrip('.')
+            result["ns"][ns_domain] = _evaluate_domain_dict(ns_domain, deep, False, False, soa)
 
-    Returns:
-        list: A list of authoritative NS records as strings.
-    """
-    try:
-        target_name = dns.name.from_text(domain)
-        current = target_name
+    if mx:
+        for record in resolve_domain(domain, 'MX'):
+            parts = record.split()
+            if len(parts) > 1:
+                mx_domain = parts[1].rstrip('.')
+                result["mx"][mx_domain] = _evaluate_domain_dict(mx_domain, deep, True, False, soa)
 
-        while current != dns.name.root:
-            try:
-                logger.debug(f"Attempting to find NS for {current}")
-                answers = dns.resolver.resolve(current, 'NS')
-                return [str(rdata) for rdata in answers]
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                current = current.parent()
+    if soa:
+        for record in resolve_domain(domain, 'SOA'):
+            parts = record.split()
+            if parts:
+                soa_domain = parts[0].rstrip('.')
+                result["soa"][soa_domain] = _evaluate_domain_dict(soa_domain, deep, True, False, soa)
 
-        return []
-    except Exception as e:
-        logger.warning(f"Failed to find NS for {domain}: {e}")
-        return []
+    return result
 
 
-async def aio_find_ns(domain: str) -> list:
-    """Asynchronously finds the authoritative Name Servers for a domain.
+async def _aio_evaluate_domain_dict(
+    domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False
+) -> Dict[str, Any]:
+    """Internal asynchronous function to evaluate a domain recursively (A + AAAA)."""
+    result: Dict[str, Any] = {"domain": domain, "dnssec": False, "backresolv": 0.0, "ips": {}}
+    if ns: result["ns"] = {}
+    if mx: result["mx"] = {}
+    if soa: result["soa"] = {}
 
-    Walks up the DNS tree label by label until it finds valid NS records.
+    dns_tasks = [
+        aio_has_dnssec(domain, deep=deep),
+        aio_check_backresolv(domain),
+        aio_resolve_domain(domain, 'A'),
+        aio_resolve_domain(domain, 'AAAA')
+    ]
 
-    Args:
-        domain (str): The domain or host name to check.
+    ns_idx, mx_idx, soa_idx = -1, -1, -1
+    if ns:
+        ns_idx = len(dns_tasks)
+        dns_tasks.append(aio_find_ns(domain))
+    if mx:
+        mx_idx = len(dns_tasks)
+        dns_tasks.append(aio_resolve_domain(domain, 'MX'))
+    if soa:
+        soa_idx = len(dns_tasks)
+        dns_tasks.append(aio_resolve_domain(domain, 'SOA'))
 
-    Returns:
-        list: A list of authoritative NS records as strings.
-    """
-    try:
-        target_name = dns.name.from_text(domain)
-        current = target_name
+    gathered = await asyncio.gather(*dns_tasks)
+    result["dnssec"] = gathered[0]
+    result["backresolv"] = gathered[1]
 
-        while current != dns.name.root:
-            try:
-                logger.debug(f"Async attempting to find NS for {current}")
-                answers = await dns.asyncresolver.resolve(current, 'NS')
-                return [str(rdata) for rdata in answers]
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                current = current.parent()
+    ips = gathered[2] + gathered[3]
 
-        return []
-    except Exception as e:
-        logger.warning(f"Async failed to find NS for {domain}: {e}")
-        return []
+    recursive_tasks = {}
+    for ip in ips:
+        recursive_tasks[("ip", ip)] = _aio_evaluate_ip_dict(ip, deep=deep)
+
+    if ns:
+        for record in gathered[ns_idx]:
+            ns_domain = record.rstrip('.')
+            recursive_tasks[("ns", ns_domain)] = _aio_evaluate_domain_dict(ns_domain, deep, False, False, soa)
+
+    if mx:
+        for record in gathered[mx_idx]:
+            parts = record.split()
+            if len(parts) > 1:
+                mx_domain = parts[1].rstrip('.')
+                recursive_tasks[("mx", mx_domain)] = _aio_evaluate_domain_dict(mx_domain, deep, True, False, soa)
+
+    if soa:
+        for record in gathered[soa_idx]:
+            parts = record.split()
+            if parts:
+                soa_domain = parts[0].rstrip('.')
+                recursive_tasks[("soa", soa_domain)] = _aio_evaluate_domain_dict(soa_domain, deep, True, False, soa)
+
+    if recursive_tasks:
+        keys = list(recursive_tasks.keys())
+        results = await asyncio.gather(*list(recursive_tasks.values()))
+
+        for (rtype, target), res in zip(keys, results, strict=True):
+            if rtype == "ip": result["ips"][target] = res
+            elif rtype == "ns": result["ns"][target] = res
+            elif rtype == "mx": result["mx"][target] = res
+            elif rtype == "soa": result["soa"][target] = res
+
+    return result
+
+
+def evaluate_ip(ip: str, deep: bool = False) -> str:
+    """Synchronously evaluates an IP address and returns JSON."""
+    return json.dumps(_evaluate_ip_dict(ip, deep=deep), indent=2)
+
+
+async def aio_evaluate_ip(ip: str, deep: bool = False) -> str:
+    """Asynchronously evaluates an IP address and returns JSON."""
+    return json.dumps(await _aio_evaluate_ip_dict(ip, deep=deep), indent=2)
+
+
+def evaluate_domain(
+    domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False
+) -> str:
+    """Synchronously evaluates a domain recursively and returns JSON."""
+    return json.dumps(_evaluate_domain_dict(domain, deep=deep, ns=ns, mx=mx, soa=soa), indent=2)
+
+
+async def aio_evaluate_domain(
+    domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False
+) -> str:
+    """Asynchronously evaluates a domain recursively and returns JSON."""
+    return json.dumps(await _aio_evaluate_domain_dict(domain, deep=deep, ns=ns, mx=mx, soa=soa), indent=2)
+
+
+def _calc_roa_avg(roa_dict: Dict[str, str]) -> float:
+    """Helper to calculate ROA average, ignoring INVALID."""
+    valid, total = 0, 0
+    for status in roa_dict.values():
+        s_up = str(status).upper()
+        if s_up == "VALID":
+            valid += 1
+            total += 1
+        elif s_up in ("NOT-FOUND", "NOT FOUND", "UNKNOWN"):
+            total += 1
+    return (valid / total) if total > 0 else 0.0
+
+
+def summarize_ip(eval_data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarizes a single IP evaluation JSON into strict metrics."""
+    data = json.loads(eval_data) if isinstance(eval_data, str) else eval_data
+    routes = data.get("routes", [])
+
+    if not routes:
+        return {
+            "most_specific_prefix": None,
+            "roa_status": "UNKNOWN",
+            "roa_average": 0.0,
+            "asns": [],
+            "aspa_average": 0.0
+        }
+
+    ms_route = routes[0]
+    ms_prefix = ms_route.get("prefix")
+
+    all_roas = {r.get("prefix"): r.get("roa_status") for r in routes if r.get("prefix")}
+    roa_avg = _calc_roa_avg(all_roas)
+
+    ms_asns = list(set(r.get("asn") for r in routes if r.get("prefix") == ms_prefix and r.get("asn")))
+
+    valid_aspa = sum(1 for r in routes if r.get("prefix") == ms_prefix and r.get("aspa_status"))
+    aspa_avg = (valid_aspa / len(ms_asns)) if ms_asns else 0.0
+
+    return {
+        "most_specific_prefix": ms_prefix,
+        "roa_status": ms_route.get("roa_status", "UNKNOWN"),
+        "roa_average": roa_avg,
+        "asns": ms_asns,
+        "aspa_average": aspa_avg
+    }
+
+
+def summarize_ipset(eval_datas: List[Union[str, Dict[str, Any]]]) -> Dict[str, Any]:
+    """Summarizes an array of IP evaluations (e.g., all NS IPs) into aggregate metrics."""
+    specific_prefixes = set()
+    specific_roas = {}
+    specific_asns = set()
+
+    all_prefixes = set()
+    all_roas = {}
+    aspa_map = {}
+
+    for item in eval_datas:
+        data = json.loads(item) if isinstance(item, str) else item
+        routes = data.get("routes", [])
+        if not routes:
+            continue
+
+        ms_route = routes[0]
+        ms_p = ms_route.get("prefix")
+        ms_roa = ms_route.get("roa_status")
+
+        if ms_p:
+            specific_prefixes.add(ms_p)
+            specific_roas[ms_p] = ms_roa
+
+        for r in routes:
+            p = r.get("prefix")
+            a = r.get("asn")
+            if p:
+                all_prefixes.add(p)
+                all_roas[p] = r.get("roa_status")
+            if a:
+                aspa_map[a] = r.get("aspa_status")
+
+            if p == ms_p and a:
+                specific_asns.add(a)
+
+    roa_avg_specific = _calc_roa_avg(specific_roas)
+    roa_avg_all = _calc_roa_avg(all_roas)
+
+    valid_aspa = sum(1 for asn in specific_asns if aspa_map.get(asn))
+    aspa_avg = (valid_aspa / len(specific_asns)) if specific_asns else 0.0
+
+    return {
+        "most_specific_prefixes": list(specific_prefixes),
+        "roa_average_specific": roa_avg_specific,
+        "roa_average_all": roa_avg_all,
+        "asns": list(specific_asns),
+        "aspa_average": aspa_avg
+    }
+
+
+def summarize_domain(eval_data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarizes a full domain evaluation tree into high-level metrics."""
+    data = json.loads(eval_data) if isinstance(eval_data, str) else eval_data
+
+    # Main domain
+    main_dnssec = data.get("dnssec", False)
+    main_backresolv = data.get("backresolv", 0.0)
+
+    main_ips = list(data.get("ips", {}).values())
+    main_ipset = summarize_ipset(main_ips) if main_ips else None
+
+    # NS
+    ns_data = data.get("ns", {})
+    ns_dnssec_list = [v.get("dnssec", False) for v in ns_data.values()]
+    ns_dnssec_avg = sum(ns_dnssec_list) / len(ns_dnssec_list) if ns_dnssec_list else 0.0
+
+    ns_br_list = [v.get("backresolv", 0.0) for v in ns_data.values()]
+    ns_backresolv_avg = sum(ns_br_list) / len(ns_br_list) if ns_br_list else 0.0
+
+    ns_ips = []
+    for ns_obj in ns_data.values():
+        ns_ips.extend(list(ns_obj.get("ips", {}).values()))
+    ns_ipset = summarize_ipset(ns_ips) if ns_ips else None
+
+    # MX
+    mx_data = data.get("mx", {})
+    mx_dnssec_list = [v.get("dnssec", False) for v in mx_data.values()]
+    mx_dnssec_avg = sum(mx_dnssec_list) / len(mx_dnssec_list) if mx_dnssec_list else 0.0
+
+    mx_br_list = [v.get("backresolv", 0.0) for v in mx_data.values()]
+    mx_backresolv_avg = sum(mx_br_list) / len(mx_br_list) if mx_br_list else 0.0
+
+    mx_ips = []
+    for mx_obj in mx_data.values():
+        mx_ips.extend(list(mx_obj.get("ips", {}).values()))
+    mx_ipset = summarize_ipset(mx_ips) if mx_ips else None
+
+    return {
+        "dnssec": main_dnssec,
+        "backresolv": main_backresolv,
+        "ipset": main_ipset,
+        "ns_dnssec_average": ns_dnssec_avg,
+        "ns_backresolv_average": ns_backresolv_avg,
+        "ns_ipset": ns_ipset,
+        "mx_dnssec_average": mx_dnssec_avg,
+        "mx_backresolv_average": mx_backresolv_avg,
+        "mx_ipset": mx_ipset
+    }
