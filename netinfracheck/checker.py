@@ -13,7 +13,9 @@ from .utils import (
     lg_data,
     aio_lg_data,
     resolve_domain,
-    aio_resolve_domain
+    aio_resolve_domain,
+    get_zone_apex,
+    aio_get_zone_apex
 )
 
 logger = logging.getLogger(__name__)
@@ -240,15 +242,7 @@ async def aio_has_aspa(asn: str, cache_ttl: int = 3600) -> bool | None:
 def has_dnssec(domain: str, deep: bool = False) -> bool:
     """Synchronously checks if a domain (or its parent zone) has DNSSEC enabled."""
     try:
-        target_name = dns.name.from_text(domain)
-
-        zone_apex = target_name
-        while zone_apex != dns.name.root:
-            try:
-                dns.resolver.resolve(zone_apex, dns.rdatatype.SOA)
-                break
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                zone_apex = zone_apex.parent()
+        zone_apex = get_zone_apex(domain)
 
         if zone_apex == dns.name.root:
             logger.warning(f"Could not find SOA for {domain} before hitting root.")
@@ -293,15 +287,7 @@ def has_dnssec(domain: str, deep: bool = False) -> bool:
 async def aio_has_dnssec(domain: str, deep: bool = False) -> bool:
     """Asynchronously checks if a domain (or its parent zone) has DNSSEC enabled."""
     try:
-        target_name = dns.name.from_text(domain)
-
-        zone_apex = target_name
-        while zone_apex != dns.name.root:
-            try:
-                await dns.asyncresolver.resolve(zone_apex, dns.rdatatype.SOA)
-                break
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                zone_apex = zone_apex.parent()
+        zone_apex = await aio_get_zone_apex(domain)
 
         if zone_apex == dns.name.root:
             logger.warning(f"Async could not find SOA for {domain} before hitting root.")

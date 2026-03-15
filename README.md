@@ -77,6 +77,24 @@ This module provides a suite of tools for synchronous and asynchronous auditing 
 
 **Errors and corner cases:** Returns an empty list on timeouts or HTTP errors. Automatically normalizes Autonomous System numbers by prepending `AS` if it is missing.
 
+### `get_zone_apex` / `aio_get_zone_apex`
+**Purpose:** Discovers the zone apex (the boundary where the SOA record is defined) for a given domain by methodically ascending the DNS tree structure.
+
+**Arguments:** * `domain` (str, required) — the domain name or hostname to evaluate.
+
+**Returns:** A `dns.name.Name` object representing the authoritative apex.
+
+**Errors and corner cases:** Falls back safely to `dns.name.root` if resolution fails completely or no SOA records exist beneath the root.
+
+### `find_ns` / `aio_find_ns`
+**Purpose:** Intelligently discovers the authoritative Name Servers for a specific host or domain. It walks up the DNS tree, stripping labels one by one, until it locates the valid `NS` records serving that zone.
+
+**Arguments:** * `domain` (str, required) — the domain name or hostname to check.
+
+**Returns:** A list of strings containing the authoritative NS records.
+
+**Errors and corner cases:** Resilient to `NXDOMAIN` and `NoAnswer` exceptions during the DNS tree ascent. Returns an empty list `[]` if the root is reached without any answers or if network errors prevent resolution.
+
 ---
 
 ## 3. Data Evaluators

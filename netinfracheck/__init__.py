@@ -19,7 +19,12 @@ from .checker import (
     check_backresolv,
     aio_check_backresolv,
 )
-from .utils import lg_data, aio_lg_data, resolve_domain, aio_resolve_domain
+from .utils import (
+    lg_data, aio_lg_data,
+    resolve_domain, aio_resolve_domain,
+    find_ns, aio_find_ns,
+    get_zone_apex, aio_find_ns,
+)
 from .evaluator import (
     evaluate_ip,
     aio_evaluate_ip,
@@ -62,4 +67,8 @@ __all__ = [
     "summarize_ip",
     "summarize_ipset",
     "summarize_domain",
+    "get_zone_apex",
+    "aio_get_zone_apex",
+    "find_ns",
+    "aio_find_ns",
 ]

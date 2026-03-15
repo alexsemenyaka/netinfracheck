@@ -2,6 +2,7 @@ import logging
 
 import dns.asyncresolver
 import dns.resolver
+import dns.name
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -112,4 +113,68 @@ async def aio_resolve_domain(domain: str, qtype: str = "A") -> list:
         return [str(rdata) for rdata in answers]
     except Exception as e:
         logger.warning(f"Async resolution of {qtype} failed for {domain}: {e}")
+        return []
+
+
+def get_zone_apex(domain: str) -> dns.name.Name:
+    """Synchronously finds the zone apex (where SOA is defined) for a domain."""
+    try:
+        target_name = dns.name.from_text(domain)
+        current = target_name
+        while current != dns.name.root:
+            try:
+                dns.resolver.resolve(current, dns.rdatatype.SOA)
+                return current
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+                current = current.parent()
+        return dns.name.root
+    except Exception:
+        return dns.name.root
+
+
+async def aio_get_zone_apex(domain: str) -> dns.name.Name:
+    """Asynchronously finds the zone apex for a domain."""
+    try:
+        target_name = dns.name.from_text(domain)
+        current = target_name
+        while current != dns.name.root:
+            try:
+                await dns.asyncresolver.resolve(current, dns.rdatatype.SOA)
+                return current
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+                current = current.parent()
+        return dns.name.root
+    except Exception:
+        return dns.name.root
+
+
+def find_ns(domain: str) -> list:
+    """Synchronously finds the authoritative Name Servers for a domain.
+
+    Uses the zone apex to reliably locate NS records even for hosts
+    without explicit delegation.
+    """
+    try:
+        apex = get_zone_apex(domain)
+        if apex == dns.name.root:
+            return []
+        logger.debug(f"Attempting to find NS for {apex}")
+        answers = dns.resolver.resolve(apex, 'NS')
+        return [str(rdata) for rdata in answers]
+    except Exception as e:
+        logger.warning(f"Failed to find NS for {domain}: {e}")
+        return []
+
+
+async def aio_find_ns(domain: str) -> list:
+    """Asynchronously finds the authoritative Name Servers for a domain."""
+    try:
+        apex = await aio_get_zone_apex(domain)
+        if apex == dns.name.root:
+            return []
+        logger.debug(f"Async attempting to find NS for {apex}")
+        answers = await dns.asyncresolver.resolve(apex, 'NS')
+        return [str(rdata) for rdata in answers]
+    except Exception as e:
+        logger.warning(f"Async failed to find NS for {domain}: {e}")
         return []
