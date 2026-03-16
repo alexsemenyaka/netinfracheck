@@ -61,7 +61,8 @@ async def main():
         deep=True,
         ns=True,
         mx=True,
-        soa=False
+        soa=False,
+        resolvers=['8.8.8.8', '1.1.1.1']
     )
 
     # Process it into the high-level summary

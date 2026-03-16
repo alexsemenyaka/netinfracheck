@@ -8,6 +8,7 @@ import dns.name
 import dns.resolver
 import dns.asyncresolver
 import dns.reversename
+from rdnsresolver import resolve, aresolve, resolve_ptr, aresolve_ptr
 
 from .utils import (
     lg_data,
@@ -248,10 +249,14 @@ async def aio_has_aspa(asn: str, cache_ttl: int = 3600) -> bool | None:
         return None
 
 
-def has_dnssec(domain: str, deep: bool = False) -> bool:
+def has_dnssec(domain: str, resolvers: list = None, deep: bool = False) -> bool:
     """Synchronously checks if a domain (or its parent zone) has DNSSEC enabled."""
     try:
-        zone_apex = get_zone_apex(domain)
+        if resolvers is not None:
+            dns.resolver.get_default_resolver().nameservers = resolvers
+            logger.debug(f"DNS resolvers are set to {resolvers}")
+
+        zone_apex = get_zone_apex(domain, resolvers=resolvers)
 
         if zone_apex == dns.name.root:
             logger.warning(f"Could not find SOA for {domain} before hitting root.")
@@ -262,8 +267,8 @@ def has_dnssec(domain: str, deep: bool = False) -> bool:
 
         if not deep:
             try:
-                dns.resolver.resolve(current, dns.rdatatype.DNSKEY)
-                dns.resolver.resolve(current, dns.rdatatype.DS)
+                resolve(current, dns.rdatatype.DNSKEY)
+                resolve(current, dns.rdatatype.DS)
                 logger.debug(f"DNSSEC shallow check passed for {domain} at {current}")
                 return True
             except Exception as e:
@@ -273,7 +278,7 @@ def has_dnssec(domain: str, deep: bool = False) -> bool:
         while True:
             logger.debug(f"Deep check: verifying zone {current}")
             try:
-                dns.resolver.resolve(current, dns.rdatatype.DNSKEY)
+                resolve(current, dns.rdatatype.DNSKEY)
             except Exception as e:
                 logger.error(f"DNSSEC break: No DNSKEY found for {current} ({e})")
                 return False
@@ -284,7 +289,7 @@ def has_dnssec(domain: str, deep: bool = False) -> bool:
 
             parent = current.parent()
             try:
-                dns.resolver.resolve(current, dns.rdatatype.DS)
+                resolve(current, dns.rdatatype.DS)
             except Exception as e:
                 logger.error(f"DNSSEC break: No DS record for {current} in zone {parent} ({e})")
                 return False
@@ -296,10 +301,14 @@ def has_dnssec(domain: str, deep: bool = False) -> bool:
         return False
 
 
-async def aio_has_dnssec(domain: str, deep: bool = False) -> bool:
+async def aio_has_dnssec(domain: str, resolvers: list = None, deep: bool = False) -> bool:
     """Asynchronously checks if a domain (or its parent zone) has DNSSEC enabled."""
     try:
-        zone_apex = await aio_get_zone_apex(domain)
+        if resolvers is not None:
+            dns.asyncresolver.get_default_resolver().nameservers = resolvers
+            logger.debug(f"DNS resolvers are set to {resolvers}")
+
+        zone_apex = await aio_get_zone_apex(domain, resolvers=resolvers)
 
         if zone_apex == dns.name.root:
             logger.warning(f"Async could not find SOA for {domain} before hitting root.")
@@ -310,8 +319,8 @@ async def aio_has_dnssec(domain: str, deep: bool = False) -> bool:
 
         if not deep:
             try:
-                await dns.asyncresolver.resolve(current, dns.rdatatype.DNSKEY)
-                await dns.asyncresolver.resolve(current, dns.rdatatype.DS)
+                await aresolve(current, dns.rdatatype.DNSKEY)
+                await aresolve(current, dns.rdatatype.DS)
                 logger.debug(f"Async DNSSEC shallow check passed for {domain} at {current}")
                 return True
             except Exception as e:
@@ -321,7 +330,7 @@ async def aio_has_dnssec(domain: str, deep: bool = False) -> bool:
         while True:
             logger.debug(f"Async deep check: verifying zone {current}")
             try:
-                await dns.asyncresolver.resolve(current, dns.rdatatype.DNSKEY)
+                await aresolve(current, dns.rdatatype.DNSKEY)
             except Exception as e:
                 logger.error(f"DNSSEC break: No DNSKEY found for {current} ({e})")
                 return False
@@ -332,7 +341,7 @@ async def aio_has_dnssec(domain: str, deep: bool = False) -> bool:
 
             parent = current.parent()
             try:
-                await dns.asyncresolver.resolve(current, dns.rdatatype.DS)
+                await aresolve(current, dns.rdatatype.DS)
             except Exception as e:
                 logger.error(f"DNSSEC break: No DS record for {current} in zone {parent} ({e})")
                 return False
@@ -344,9 +353,13 @@ async def aio_has_dnssec(domain: str, deep: bool = False) -> bool:
         return False
 
 
-def check_backresolv(domain: str) -> float:
+def check_backresolv(domain: str, resolvers: list = None) -> float:
     """Synchronously checks the fraction of PTR records that match the domain."""
-    ips = resolve_domain(domain, 'A') + resolve_domain(domain, 'AAAA')
+    if resolvers is not None:
+        dns.resolver.get_default_resolver().nameservers = resolvers
+        logger.debug(f"DNS resolvers are set to {resolvers}")
+
+    ips = resolve_domain(domain, 'A', resolvers=resolvers) + resolve_domain(domain, 'AAAA', resolvers=resolvers)
     if not ips:
         logger.debug(f"No IP addresses found for PTR check of {domain}")
         return 0.0
@@ -354,8 +367,7 @@ def check_backresolv(domain: str) -> float:
     ptr_names = []
     for ip in ips:
         try:
-            rev_name = dns.reversename.from_address(ip)
-            answers = dns.resolver.resolve(rev_name, 'PTR')
+            answers = resolve_ptr(ip)
             for rdata in answers:
                 ptr_names.append(rdata.target.to_text().rstrip('.'))
         except Exception as e:
@@ -371,11 +383,15 @@ def check_backresolv(domain: str) -> float:
     return fraction
 
 
-async def aio_check_backresolv(domain: str) -> float:
+async def aio_check_backresolv(domain: str, resolvers: list = None) -> float:
     """Asynchronously checks the fraction of PTR records that match the domain."""
+    if resolvers is not None:
+        dns.asyncresolver.get_default_resolver().nameservers = resolvers
+        logger.debug(f"DNS resolvers are set to {resolvers}")
+
     ips_a, ips_aaaa = await asyncio.gather(
-        aio_resolve_domain(domain, 'A'),
-        aio_resolve_domain(domain, 'AAAA')
+        aio_resolve_domain(domain, 'A', resolvers=resolvers),
+        aio_resolve_domain(domain, 'AAAA', resolvers=resolvers)
     )
     ips = ips_a + ips_aaaa
     if not ips:
@@ -385,8 +401,7 @@ async def aio_check_backresolv(domain: str) -> float:
     ptr_names = []
     async def fetch_ptr(ip):
         try:
-            rev_name = dns.reversename.from_address(ip)
-            answers = await dns.asyncresolver.resolve(rev_name, 'PTR')
+            answers = await aresolve(ip)
             return [rdata.target.to_text().rstrip('.') for rdata in answers]
         except Exception as e:
             logger.debug(f"Async PTR resolution failed for IP {ip} ({domain}): {e}")

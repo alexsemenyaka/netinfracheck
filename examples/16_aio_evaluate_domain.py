@@ -13,7 +13,8 @@ async def main():
         deep=False,
         ns=True,
         mx=True,
-        soa=True
+        soa=True,
+        resolvers=['8.8.8.8', '1.1.1.1']
     )
 
     print(json_result)

@@ -1,5 +1,6 @@
 import logging
 
+from rdnsresolver import resolve, aresolve, resolve_ptr, aresolve_ptr
 import dns.asyncresolver
 import dns.resolver
 import dns.name
@@ -56,11 +57,15 @@ async def aio_lg_data(resource: str) -> list:
         return []
 
 
-def resolve_domain(domain: str, qtype: str = "A") -> list:
+def resolve_domain(domain: str, qtype: str = "A", resolvers: list = None) -> list:
     """Synchronously resolves a domain name for a specific DNS record type."""
     try:
+        if resolvers is not None:
+            dns.resolver.get_default_resolver().nameservers = resolvers
+            logger.debug(f"DNS resolvers are set to {resolvers}")
+
         logger.debug(f"Resolving {qtype} records for {domain}")
-        answers = dns.resolver.resolve(domain, qtype)
+        answers = resolve(domain, qtype)
         res = [str(rdata) for rdata in answers]
         logger.debug(f"Successfully resolved {qtype} for {domain}: {len(res)} records")
         return res
@@ -69,11 +74,15 @@ def resolve_domain(domain: str, qtype: str = "A") -> list:
         return []
 
 
-async def aio_resolve_domain(domain: str, qtype: str = "A") -> list:
+async def aio_resolve_domain(domain: str, qtype: str = "A", resolvers: list = None) -> list:
     """Asynchronously resolves a domain name for a specific DNS record type."""
     try:
+        if resolvers is not None:
+            dns.asyncresolver.get_default_resolver().nameservers = resolvers
+            logger.debug(f"DNS resolvers are set to {resolvers}")
+
         logger.debug(f"Async resolving {qtype} records for {domain}")
-        answers = await dns.asyncresolver.resolve(domain, qtype)
+        answers = await aresolve(domain, qtype)
         res = [str(rdata) for rdata in answers]
         logger.debug(f"Async successfully resolved {qtype} for {domain}: {len(res)} records")
         return res
@@ -82,13 +91,17 @@ async def aio_resolve_domain(domain: str, qtype: str = "A") -> list:
         return []
 
 
-def get_zone_apex(domain: str) -> dns.name.Name:
+def get_zone_apex(domain: str, resolvers: list = None) -> dns.name.Name:
     """Synchronously finds the zone apex (where SOA is defined) for a domain."""
     try:
+        if resolvers is not None:
+            dns.resolver.get_default_resolver().nameservers = resolvers
+            logger.debug(f"DNS resolvers are set to {resolvers}")
+
         current = dns.name.from_text(domain)
         while current != dns.name.root:
             try:
-                dns.resolver.resolve(current, dns.rdatatype.SOA)
+                resolve(current, dns.rdatatype.SOA)
                 logger.debug(f"Found zone apex: {current} for domain {domain}")
                 return current
             except Exception as e:
@@ -101,13 +114,17 @@ def get_zone_apex(domain: str) -> dns.name.Name:
         return dns.name.root
 
 
-async def aio_get_zone_apex(domain: str) -> dns.name.Name:
+async def aio_get_zone_apex(domain: str, resolvers: list = None) -> dns.name.Name:
     """Asynchronously finds the zone apex (where SOA is defined) for a domain."""
     try:
+        if resolvers is not None:
+            dns.asyncresolver.get_default_resolver().nameservers = resolvers
+            logger.debug(f"DNS resolvers are set to {resolvers}")
+
         current = dns.name.from_text(domain)
         while current != dns.name.root:
             try:
-                await dns.asyncresolver.resolve(current, dns.rdatatype.SOA)
+                await aresolve(current, dns.rdatatype.SOA)
                 logger.debug(f"Async found zone apex: {current} for domain {domain}")
                 return current
             except Exception as e:
@@ -120,14 +137,18 @@ async def aio_get_zone_apex(domain: str) -> dns.name.Name:
         return dns.name.root
 
 
-def find_ns(domain: str) -> list:
+def find_ns(domain: str, resolvers: list = None) -> list:
     """Synchronously finds the authoritative Name Servers for a domain."""
     try:
+        if resolvers is not None:
+            dns.resolver.get_default_resolver().nameservers = resolvers
+            logger.debug(f"DNS resolvers are set to {resolvers}")
+
         current = dns.name.from_text(domain)
         while current != dns.name.root:
             try:
                 logger.debug(f"Attempting to find NS for {current}")
-                answers = dns.resolver.resolve(current, 'NS')
+                answers = resolve(current, 'NS')
                 res = [str(rdata) for rdata in answers]
                 logger.debug(f"Successfully found NS for {domain} at {current}: {len(res)} records")
                 return res
@@ -141,14 +162,18 @@ def find_ns(domain: str) -> list:
         return []
 
 
-async def aio_find_ns(domain: str) -> list:
+async def aio_find_ns(domain: str, resolvers: list = None) -> list:
     """Asynchronously finds the authoritative Name Servers for a domain."""
     try:
+        if resolvers is not None:
+            dns.asyncresolver.get_default_resolver().nameservers = resolvers
+            logger.debug(f"DNS resolvers are set to {resolvers}")
+
         current = dns.name.from_text(domain)
         while current != dns.name.root:
             try:
                 logger.debug(f"Async attempting to find NS for {current}")
-                answers = await dns.asyncresolver.resolve(current, 'NS')
+                answers = await aresolve(current, 'NS')
                 res = [str(rdata) for rdata in answers]
                 logger.debug(f"Async successfully found NS for {domain} at {current}: {len(res)} records")
                 return res

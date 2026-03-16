@@ -20,7 +20,8 @@ def main():
         deep=False,
         ns=True,
         mx=True,
-        soa=False
+        soa=False,
+        resolvers=['8.8.8.8', '1.1.1.1']
     )
 
     print(json_result)
