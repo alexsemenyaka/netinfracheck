@@ -3,7 +3,7 @@ import time
 import logging
 import threading
 import asyncio
-import httpx
+import rhttpx
 import dns.name
 import dns.resolver
 import dns.asyncresolver
@@ -51,7 +51,7 @@ def _update_aspa_cache_sync(token: str, cache_ttl: int) -> bool:
             headers = {"Authorization": f"Bearer {token}"}
 
             logger.info("Fetching new ASPA snapshot from Cloudflare Radar (Sync)...")
-            with httpx.Client(timeout=15.0) as client:
+            with rhttpx.RetryingClient(timeout=15.0) as client:
                 response = client.get(url, headers=headers)
                 response.raise_for_status()
                 data = response.json()
@@ -86,7 +86,7 @@ async def _update_aspa_cache_async(token: str, cache_ttl: int) -> bool:
             headers = {"Authorization": f"Bearer {token}"}
 
             logger.info("Fetching new ASPA snapshot from Cloudflare Radar (Async)...")
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with rhttpx.AsyncRetryingClient(timeout=15.0) as client:
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
                 data = response.json()
@@ -116,7 +116,7 @@ def has_roa(address: str, deep: bool = False):
         return (None, "UNKNOWN") if not deep else ([], [])
 
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with rhttpx.RetryingClient(timeout=10.0) as client:
             def check_rpki(prefix, asn):
                 url = (
                     f"https://stat.ripe.net/data/rpki-validation/data.json"
@@ -152,7 +152,7 @@ async def aio_has_roa(address: str, deep: bool = False):
         return (None, "UNKNOWN") if not deep else ([], [])
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with rhttpx.AsyncRetryingClient(timeout=10.0) as client:
             async def check_rpki(prefix, asn):
                 url = (
                     f"https://stat.ripe.net/data/rpki-validation/data.json"

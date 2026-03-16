@@ -3,7 +3,7 @@ import logging
 import dns.asyncresolver
 import dns.resolver
 import dns.name
-import httpx
+import rhttpx
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -30,7 +30,7 @@ def lg_data(resource: str) -> list:
     """Synchronously retrieves and parses Looking Glass data for a resource."""
     url = f"https://stat.ripe.net/data/looking-glass/data.json?resource={resource}"
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with rhttpx.RetryingClient(timeout=10.0) as client:
             response = client.get(url)
             response.raise_for_status()
             res = _parse_lg_response(response.json())
@@ -45,7 +45,7 @@ async def aio_lg_data(resource: str) -> list:
     """Asynchronously retrieves and parses Looking Glass data for a resource."""
     url = f"https://stat.ripe.net/data/looking-glass/data.json?resource={resource}"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with rhttpx.AsyncRetryingClient(timeout=10.0) as client:
             response = await client.get(url)
             response.raise_for_status()
             res = _parse_lg_response(response.json())
