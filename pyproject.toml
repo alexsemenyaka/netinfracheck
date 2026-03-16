@@ -1,6 +1,6 @@
 [project]
 name = "netinfracheck"
-version = "0.2.3"
+version = "0.3.0"
 description = "netinfracheck: Infrastructural checks for IP addresses and domain names (ROA, ASPA, DNSSEC...)"
 authors = [
     { name = "Alex Semenyaka", email = "alex.semenyaka@gmail.com" },
