@@ -29,7 +29,7 @@ async def main():
     print(f"=== Evaluating Route Security for NS servers of {domain} ===\n")
 
     # 1. Gather all NS records
-    ns_records = await netinfracheck.aio_resolve_domain(domain, 'NS')
+    ns_records = await netinfracheck.aio_resolve_domain(domain, 'NS', resolvers=['8.8.8.8', '1.1.1.1'])
     if not ns_records:
         print("No NS records found.")
         return

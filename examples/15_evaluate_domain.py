@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import logging
+import json
 import netinfracheck
 
 logging.basicConfig(
@@ -24,7 +25,7 @@ def main():
         resolvers=['8.8.8.8', '1.1.1.1']
     )
 
-    print(json_result)
+    print(json.dumps(json_result, indent=2))
 
 if __name__ == "__main__":
     main()

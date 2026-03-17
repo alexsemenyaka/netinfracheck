@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-def _evaluate_ip_dict(ip: str, deep: bool = False) -> Dict[str, Any]:
+def evaluate_ip(ip: str, deep: bool = False) -> Dict[str, Any]:
     """Internal synchronous function to evaluate an IP and bind ASNs to prefixes."""
     logger.debug(f"Evaluating IP {ip} (deep={deep})")
 
@@ -62,7 +62,7 @@ def _evaluate_ip_dict(ip: str, deep: bool = False) -> Dict[str, Any]:
     }
 
 
-async def _aio_evaluate_ip_dict(ip: str, deep: bool = False) -> Dict[str, Any]:
+async def aio_evaluate_ip(ip: str, deep: bool = False) -> Dict[str, Any]:
     """Internal asynchronous function to evaluate an IP and bind ASNs to prefixes."""
     logger.debug(f"Async evaluating IP {ip} (deep={deep})")
 
@@ -102,7 +102,7 @@ async def _aio_evaluate_ip_dict(ip: str, deep: bool = False) -> Dict[str, Any]:
     }
 
 
-def _evaluate_domain_dict(domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False, resolvers: list = None) -> Dict[str, Any]:
+def evaluate_domain(domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False, resolvers: list = None) -> Dict[str, Any]:
     """Internal synchronous function to evaluate a domain recursively (A + AAAA)."""
     result: Dict[str, Any] = {
         "domain": domain,
@@ -116,31 +116,31 @@ def _evaluate_domain_dict(domain: str, deep: bool = False, ns: bool = False, mx:
 
     ips = resolve_domain(domain, 'A', resolvers=resolvers) + resolve_domain(domain, 'AAAA', resolvers=resolvers)
     for ip in ips:
-        result["ips"][ip] = _evaluate_ip_dict(ip, deep=deep)
+        result["ips"][ip] = evaluate_ip(ip, deep=deep)
 
     if ns:
         for record in find_ns(domain):
             ns_domain = record.rstrip('.')
-            result["ns"][ns_domain] = _evaluate_domain_dict(ns_domain, deep, False, False, soa, resolvers=resolvers)
+            result["ns"][ns_domain] = evaluate_domain(ns_domain, deep, False, False, soa, resolvers=resolvers)
 
     if mx:
         for record in resolve_domain(domain, 'MX'):
             parts = record.split()
             if len(parts) > 1:
                 mx_domain = parts[1].rstrip('.')
-                result["mx"][mx_domain] = _evaluate_domain_dict(mx_domain, deep, True, False, soa, resolvers=resolvers)
+                result["mx"][mx_domain] = evaluate_domain(mx_domain, deep, True, False, soa, resolvers=resolvers)
 
     if soa:
         for record in resolve_domain(domain, 'SOA'):
             parts = record.split()
             if parts:
                 soa_domain = parts[0].rstrip('.')
-                result["soa"][soa_domain] = _evaluate_domain_dict(soa_domain, deep, True, False, soa, resolvers=resolvers)
+                result["soa"][soa_domain] = evaluate_domain(soa_domain, deep, True, False, soa, resolvers=resolvers)
 
     return result
 
 
-async def _aio_evaluate_domain_dict(domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False, resolvers: list = None) -> Dict[str, Any]:
+async def aio_evaluate_domain(domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False, resolvers: list = None) -> Dict[str, Any]:
     """Internal asynchronous function to evaluate a domain recursively (A + AAAA)."""
     result: Dict[str, Any] = {"domain": domain, "dnssec": False, "backresolv": 0.0, "ips": {}}
     if ns: result["ns"] = {}
@@ -173,26 +173,26 @@ async def _aio_evaluate_domain_dict(domain: str, deep: bool = False, ns: bool = 
 
     recursive_tasks = {}
     for ip in ips:
-        recursive_tasks[("ip", ip)] = _aio_evaluate_ip_dict(ip, deep=deep)
+        recursive_tasks[("ip", ip)] = aio_evaluate_ip(ip, deep=deep)
 
     if ns:
         for record in gathered[ns_idx]:
             ns_domain = record.rstrip('.')
-            recursive_tasks[("ns", ns_domain)] = _aio_evaluate_domain_dict(ns_domain, deep, False, False, soa, resolvers=resolvers)
+            recursive_tasks[("ns", ns_domain)] = aio_evaluate_domain(ns_domain, deep, False, False, soa, resolvers=resolvers)
 
     if mx:
         for record in gathered[mx_idx]:
             parts = record.split()
             if len(parts) > 1:
                 mx_domain = parts[1].rstrip('.')
-                recursive_tasks[("mx", mx_domain)] = _aio_evaluate_domain_dict(mx_domain, deep, True, False, soa, resolvers=resolvers)
+                recursive_tasks[("mx", mx_domain)] = aio_evaluate_domain(mx_domain, deep, True, False, soa, resolvers=resolvers)
 
     if soa:
         for record in gathered[soa_idx]:
             parts = record.split()
             if parts:
                 soa_domain = parts[0].rstrip('.')
-                recursive_tasks[("soa", soa_domain)] = _aio_evaluate_domain_dict(soa_domain, deep, True, False, soa, resolvers=resolvers)
+                recursive_tasks[("soa", soa_domain)] = aio_evaluate_domain(soa_domain, deep, True, False, soa, resolvers=resolvers)
 
     if recursive_tasks:
         keys = list(recursive_tasks.keys())
@@ -205,26 +205,6 @@ async def _aio_evaluate_domain_dict(domain: str, deep: bool = False, ns: bool = 
             elif rtype == "soa": result["soa"][target] = res
 
     return result
-
-
-def evaluate_ip(ip: str, deep: bool = False) -> str:
-    """Synchronously evaluates an IP address and returns JSON."""
-    return json.dumps(_evaluate_ip_dict(ip, deep=deep), indent=2)
-
-
-async def aio_evaluate_ip(ip: str, deep: bool = False) -> str:
-    """Asynchronously evaluates an IP address and returns JSON."""
-    return json.dumps(await _aio_evaluate_ip_dict(ip, deep=deep), indent=2)
-
-
-def evaluate_domain(domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False, resolvers: list = None) -> str:
-    """Synchronously evaluates a domain recursively and returns JSON."""
-    return json.dumps(_evaluate_domain_dict(domain, deep=deep, ns=ns, mx=mx, soa=soa, resolvers=resolvers), indent=2)
-
-
-async def aio_evaluate_domain(domain: str, deep: bool = False, ns: bool = False, mx: bool = False, soa: bool = False, resolvers: list = None) -> str:
-    """Asynchronously evaluates a domain recursively and returns JSON."""
-    return json.dumps(await _aio_evaluate_domain_dict(domain, deep=deep, ns=ns, mx=mx, soa=soa, resolvers=resolvers), indent=2)
 
 
 def _calc_roa_avg(roa_dict: Dict[str, str]) -> float:

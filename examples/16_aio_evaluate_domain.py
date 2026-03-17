@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import asyncio
 import netinfracheck
 
@@ -17,7 +18,7 @@ async def main():
         resolvers=['8.8.8.8', '1.1.1.1']
     )
 
-    print(json_result)
+    print(json.dumps(json_result, indent=2))
 
 if __name__ == "__main__":
     asyncio.run(main())
